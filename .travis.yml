@@ -29,79 +29,9 @@ matrix:
   fast_finish: true
   include:
     # normal
-    # gpg stable
-    - env: BUILD_MODE=normal GPG_VERSION=stable
-      compiler: clang
-      stage: cache
-      script: true
     - env: BUILD_MODE=normal GPG_VERSION=stable
       compiler: clang
       stage: test
-    # gpg master
-    - env: BUILD_MODE=normal GPG_VERSION=beta
-      compiler: clang
-      stage: cache
-      script: true
-    - env: BUILD_MODE=normal GPG_VERSION=beta
-      compiler: clang
-      stage: test
-
-    # clang sanitizers
-    # gpg stable
-    - env: BUILD_MODE=sanitize GPG_VERSION=stable
-      compiler: clang
-      stage: cache
-      script: true
-    - env: BUILD_MODE=sanitize GPG_VERSION=stable
-      compiler: clang
-      sudo: true
-      stage: test
-    # gpg master
-    - env: BUILD_MODE=sanitize GPG_VERSION=beta
-      compiler: clang
-      stage: cache
-      script: true
-    - env: BUILD_MODE=sanitize GPG_VERSION=beta
-      compiler: clang
-      sudo: true
-      stage: test
-
-    # codecov
-    - env: BUILD_MODE=coverage RNP_TESTS=cmocka GPG_VERSION=beta
-      compiler: gcc
-      stage: cache
-      script: true
-    - env: BUILD_MODE=coverage RNP_TESTS=cmocka GPG_VERSION=beta
-      compiler: gcc
-      stage: test
-    - env: BUILD_MODE=coverage RNP_TESTS=cli GPG_VERSION=beta
-      compiler: gcc
-      stage: cache
-      script: true
-    - env: BUILD_MODE=coverage RNP_TESTS=cli GPG_VERSION=beta
-      compiler: gcc
-      stage: test
-
-    # clang-format style checks
-    - env: BUILD_MODE=style-check
-      install: true
-      stage: test
-      addons:
-        apt:
-          sources:
-            - llvm-toolchain-trusty-4.0
-          packages:
-            - clang-format-4.0
-
-  allow_failures:
-    # allowed to fail until we have stabilized on a clang-format version
-    - env: BUILD_MODE=style-check
-      install: true
-      stage: test
-
-stages:
-  - cache
-  - test
 
 cache:
   directories:
