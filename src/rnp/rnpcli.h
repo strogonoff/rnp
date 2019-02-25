@@ -28,12 +28,14 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
-#ifndef RNP_H_
-#define RNP_H_
+#ifndef RNPCLI_H_
+#define RNPCLI_H_
 
 #include <stddef.h>
 #include <stdbool.h>
+#include "rnp/rnp2.h"
 #include "rnp.h"
+#include "rnpcfg.h"
 
 #if defined(__cplusplus)
 extern "C" {
@@ -167,4 +169,4 @@ rnp_result_t rnp_encrypt_add_password(rnp_t *rnp, rnp_ctx_t *ctx);
 }
 #endif
 
-#endif /* !RNP_H_ */
+#endif /* !RNPCLI_H_ */
