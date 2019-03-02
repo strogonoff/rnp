@@ -48,7 +48,7 @@ int
 rnpkeys_main(int argc, char **argv)
 #endif
 {
-    rnp_t     rnp = {};
+    new_rnp_t rnp = {};
     rnp_cfg_t opt_cfg = {};
     rnp_cfg_t cfg = {};
     optdefs_t cmd = (optdefs_t) 0;
@@ -95,7 +95,7 @@ rnpkeys_main(int argc, char **argv)
         }
     }
 
-    if (!rnpkeys_init(&cfg, &rnp, &opt_cfg, true)) {
+    if (!new_rnpkeys_init(&cfg, &rnp, &opt_cfg, true)) {
         ret = EXIT_FAILURE;
         goto end;
     }

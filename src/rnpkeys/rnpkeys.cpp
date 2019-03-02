@@ -531,3 +531,49 @@ end:
     }
     return ret;
 }
+
+bool
+new_rnpkeys_init(rnp_cfg_t *cfg, new_rnp_t *rnp, const rnp_cfg_t *override_cfg, bool is_generate_key)
+{
+    bool         ret = true;
+    rnp_params_t rnp_params;
+
+    rnp_params_init(&rnp_params);
+    rnp_cfg_init(cfg);
+
+    rnp_cfg_load_defaults(cfg);
+    rnp_cfg_setint(cfg, CFG_NUMBITS, DEFAULT_RSA_NUMBITS);
+    rnp_cfg_setstr(cfg, CFG_IO_RESS, "<stdout>");
+    rnp_cfg_setstr(cfg, CFG_KEYFORMAT, "human");
+    rnp_cfg_copy(cfg, override_cfg);
+
+    memset(rnp, '\0', sizeof(rnp_t));
+
+    if (!rnp_cfg_apply(cfg, &rnp_params)) {
+        fputs("fatal: cannot apply configuration\n", stderr);
+        ret = false;
+        goto end;
+    }
+
+    if (rnp_init(rnp, &rnp_params) != RNP_SUCCESS) {
+        fputs("fatal: failed to initialize rnpkeys\n", stderr);
+        ret = false;
+        goto end;
+    }
+
+    if (!rnp_load_keyrings(rnp, 1) && !is_generate_key) {
+        /* Keys mightn't loaded if this is a key generation step. */
+        fputs("fatal: failed to load keys\n", stderr);
+        ret = false;
+        goto end;
+    }
+
+end:
+    rnp_params_free(&rnp_params);
+    if (!ret) {
+        rnp_cfg_free(cfg);
+        rnp_end(rnp);
+    }
+    return ret;
+}
+

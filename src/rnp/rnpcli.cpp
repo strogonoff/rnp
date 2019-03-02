@@ -44,6 +44,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <time.h>
+#include <termios.h>
 
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>
@@ -111,10 +112,13 @@ disable_core_dumps(void)
 #endif
 
 static bool
-set_pass_fd(rnp_t *rnp, int passfd)
+set_pass_fd(FILE **file, int passfd)
 {
-    rnp->passfp = fdopen(passfd, "r");
-    if (!rnp->passfp) {
+    if (!file) {
+        return false;
+    }
+    *file = fdopen(passfd, "r");
+    if (*file) {
         RNP_LOG("cannot open fd %d for reading", passfd);
         return false;
     }
@@ -133,6 +137,124 @@ rnp_key_provider_keyring(const pgp_key_request_ctx_t *ctx, void *userdata)
         return NULL;
     }
     return rnp_key_provider_store(ctx, ctx->secret ? rnp->secring : rnp->pubring);
+}
+
+static bool
+stdin_getpass(const char *prompt, char *buffer, size_t size)
+{
+    struct termios saved_flags, noecho_flags;
+    bool           restore_ttyflags = false;
+    bool           ok = false;
+    FILE *         in = NULL;
+    FILE *         out = NULL;
+
+    // validate args
+    if (!buffer) {
+        goto end;
+    }
+    // doesn't hurt
+    *buffer = '\0';
+
+    in = fopen("/dev/tty", "w+ce");
+    if (!in) {
+        in = stdin;
+        out = stderr;
+    } else {
+        out = in;
+    }
+
+    // save the original termios
+    if (tcgetattr(fileno(in), &saved_flags) == 0) {
+        noecho_flags = saved_flags;
+        // disable echo in the local modes
+        noecho_flags.c_lflag = (noecho_flags.c_lflag & ~ECHO) | ECHONL | ISIG;
+        restore_ttyflags = (tcsetattr(fileno(in), TCSANOW, &noecho_flags) == 0);
+    }
+    if (prompt) {
+        fputs(prompt, out);
+    }
+    if (fgets(buffer, size, in) == NULL) {
+        goto end;
+    }
+
+    rnp_strip_eol(buffer);
+    ok = true;
+end:
+    if (restore_ttyflags) {
+        tcsetattr(fileno(in), TCSAFLUSH, &saved_flags);
+    }
+    if (in != stdin) {
+        fclose(in);
+    }
+    return ok;
+}
+
+static bool
+ffi_pass_callback_stdin(rnp_ffi_t ffi, void *app_ctx, rnp_key_handle_t key, const char *pgp_context, char buf[], size_t buf_len)
+{
+    char *keyid = NULL;
+    char target[64] = {0};
+    char prompt[128] = {0};
+    char buffer[MAX_PASSWORD_LENGTH];
+    bool ok = false;
+
+    if (!ffi || !pgp_context) {
+        goto done;
+    }
+
+    if (strcmp(pgp_context, "decrypt (symmetric)") && strcmp(pgp_context, "encrypt (symmetric)")) {
+        rnp_key_get_keyid(key, &keyid);
+        snprintf(target, sizeof(target), "key 0x%s", keyid);
+        rnp_buffer_destroy(keyid);
+    }
+start:
+    if (!strcmp(pgp_context, "decrypt (symmetric)")) {
+        snprintf(prompt, sizeof(prompt), "Enter password to decrypt data: ");
+    } else if (!strcmp(pgp_context, "encrypt (symmetric)")) {
+        snprintf(prompt, sizeof(prompt), "Enter password to encrypt data: ");
+    } else {
+        snprintf(prompt, sizeof(prompt), "Enter password for %s: ", target);
+    }
+
+    if (!stdin_getpass(prompt, buf, buf_len)) {
+        goto done;
+    }
+    if (!strcmp(pgp_context, "protect") || !strcmp(pgp_context, "encrypt (symmetric)")) {
+        if (!strcmp(pgp_context, "protect")) {
+            snprintf(prompt, sizeof(prompt), "Repeat password for %s: ", target);
+        } else {
+            snprintf(prompt, sizeof(prompt), "Repeat password: ");
+        }
+
+        if (!stdin_getpass(prompt, buffer, sizeof(buffer))) {
+            goto done;
+        }
+        if (strcmp(buf, buffer) != 0) {
+            puts("\nPasswords do not match!");
+            // currently will loop forever
+            goto start;
+        }
+    }
+    ok = true;
+done:
+    puts("");
+    pgp_forget(buffer, sizeof(buffer));
+    return ok;
+}
+
+static bool
+ffi_pass_callback_file(rnp_ffi_t ffi, void *app_ctx, rnp_key_handle_t key, const char *pgp_context, char buf[], size_t buf_len)
+{
+    if (!app_ctx || !buf || !buf_len) {
+        return false;
+    }
+
+    FILE *fp = (FILE *) app_ctx;
+    if (!fgets(buf, buf_len, fp)) {
+        return false;
+    }
+    rnp_strip_eol(buf);
+    return true;
 }
 
 /*************************************************************************/
@@ -180,15 +302,11 @@ rnp_init(rnp_t *rnp, const rnp_params_t *params)
 
     // setup file/pipe password input if requested
     if (params->passfd >= 0) {
-        if (!set_pass_fd(rnp, params->passfd)) {
+        if (!set_pass_fd(&rnp->passfp, params->passfd)) {
             return RNP_ERROR_GENERIC;
         }
         rnp->password_provider.callback = rnp_password_provider_file;
         rnp->password_provider.userdata = rnp->passfp;
-    }
-
-    if (params->password_provider.callback) {
-        rnp->password_provider = params->password_provider;
     }
 
     if (params->userinputfd >= 0) {
@@ -219,6 +337,92 @@ rnp_init(rnp_t *rnp, const rnp_params_t *params)
     // Lazy mode can't fail
     (void) rng_init(&rnp->rng, RNG_DRBG);
     return RNP_SUCCESS;
+}
+
+rnp_result_t
+new_rnp_init(new_rnp_t *rnp, const rnp_params_t *params)
+{
+    bool coredumps = true;
+
+    /* If system resource constraints are in effect then attempt to
+     * disable core dumps.
+     */
+    if (!params->enable_coredumps) {
+#ifdef HAVE_SYS_RESOURCE_H
+        coredumps = disable_core_dumps() != RNP_SUCCESS;
+#endif
+    }
+
+    if (coredumps) {
+        fputs(
+          "rnp: warning: core dumps may be enabled, sensitive data may be leaked to disk\n",
+          stderr);
+    }
+
+    /* Configure the results stream. */
+    if (!params->ress || !strcmp(params->ress, "<stderr>")) {
+        rnp->resfp = stderr;
+    } else if (strcmp(params->ress, "<stdout>") == 0) {
+        rnp->resfp = stdout;
+    } else if (!(rnp->resfp = fopen(params->ress, "w"))) {
+        fprintf(stderr, "cannot open results %s for writing\n", params->ress);
+        return RNP_ERROR_BAD_PARAMETERS;
+    }
+
+    rnp_result_t ret = RNP_ERROR_GENERIC;
+    if ((ret = rnp_ffi_create(&rnp->ffi, params->ks_pub_format, params->ks_sec_format))) {
+        return ret;
+    }
+
+    // by default use stdin password provider
+    if ((ret = rnp_ffi_set_pass_provider(rnp->ffi, ffi_pass_callback_stdin, NULL))) {
+        goto done;
+    }
+
+    // setup file/pipe password input if requested
+    if (params->passfd >= 0) {
+        if (!set_pass_fd(&rnp->passfp, params->passfd)) {
+            ret = RNP_ERROR_GENERIC;
+            goto done;
+        }
+        if ((ret = rnp_ffi_set_pass_provider(rnp->ffi, ffi_pass_callback_file, rnp->passfp))) {
+            goto done;
+        }
+    }
+
+    if (params->userinputfd >= 0) {
+        rnp->user_input_fp = fdopen(params->userinputfd, "r");
+        if (!rnp->user_input_fp) {
+            return RNP_ERROR_BAD_PARAMETERS;
+        }
+    }
+
+    rnp->pswdtries = MAX_PASSWORD_ATTEMPTS;
+
+    /* set keystore type and pathes */
+    if (params->pubpath) {
+        rnp->pubring = rnp_key_store_new(params->ks_pub_format, params->pubpath);
+        if (rnp->pubring == NULL) {
+            RNP_LOG("can't create empty pubring keystore");
+            return RNP_ERROR_BAD_PARAMETERS;
+        }
+    }
+    if (params->secpath) {
+        rnp->secring = rnp_key_store_new(params->ks_sec_format, params->secpath);
+        if (rnp->secring == NULL) {
+            RNP_LOG("can't create empty secring keystore");
+            return RNP_ERROR_BAD_PARAMETERS;
+        }
+    }
+
+    // Lazy mode can't fail
+    (void) rng_init(&rnp->rng, RNG_DRBG);
+done:
+    if (ret) {
+        rnp_ffi_destroy(rnp->ffi);
+        rnp->ffi = NULL;
+    }
+    return ret;
 }
 
 /* finish off with the rnp_t struct */

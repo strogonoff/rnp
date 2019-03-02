@@ -64,5 +64,7 @@ bool         parse_option(rnp_cfg_t *cfg, optdefs_t *cmd, const char *s);
  *
 -------------------------------------------------------------------------------- */
 bool rnpkeys_init(rnp_cfg_t *cfg, rnp_t *rnp, const rnp_cfg_t *opt_cfg, bool is_generate_key);
+bool new_rnpkeys_init(rnp_cfg_t *cfg, new_rnp_t *rnp, const rnp_cfg_t *opt_cfg, bool is_generate_key);
+
 
 #endif /* _rnpkeys_ */

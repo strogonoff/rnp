@@ -64,6 +64,13 @@ typedef struct rnp_t {
     rng_t                   rng; /* handle to rng_t */
 } rnp_t;
 
+typedef struct new_rnp_t {
+    rnp_t rnp;
+    rnp_ffi_t ffi;
+    FILE *resfp;         /* where to put result messages, defaults to stdout */
+    FILE *passfp;        /* file pointer for password input */
+} new_rnp_t;
+
 /* rnp initialization parameters : keyring pathes, flags, whatever else */
 typedef struct rnp_params_t {
     unsigned enable_coredumps; /* enable coredumps: if it is allowed then they are disabled by
@@ -79,7 +86,6 @@ typedef struct rnp_params_t {
     char *      secpath;           /* secret keystore path */
     char *      defkey;            /* default/preferred key id */
     bool        keystore_disabled; /* indicates wether keystore must be initialized */
-    pgp_password_provider_t password_provider;
 } rnp_params_t;
 
 /* initialize rnp using the init structure  */
