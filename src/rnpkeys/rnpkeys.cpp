@@ -555,13 +555,13 @@ new_rnpkeys_init(rnp_cfg_t *cfg, new_rnp_t *rnp, const rnp_cfg_t *override_cfg, 
         goto end;
     }
 
-    if (rnp_init(rnp, &rnp_params) != RNP_SUCCESS) {
+    if (new_rnp_init(rnp, &rnp_params) != RNP_SUCCESS) {
         fputs("fatal: failed to initialize rnpkeys\n", stderr);
         ret = false;
         goto end;
     }
 
-    if (!rnp_load_keyrings(rnp, 1) && !is_generate_key) {
+    if (!new_rnp_load_keyrings(rnp, true) && !is_generate_key) {
         /* Keys mightn't loaded if this is a key generation step. */
         fputs("fatal: failed to load keys\n", stderr);
         ret = false;

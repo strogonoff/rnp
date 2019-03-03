@@ -69,6 +69,12 @@ typedef struct new_rnp_t {
     rnp_ffi_t ffi;
     FILE *resfp;         /* where to put result messages, defaults to stdout */
     FILE *passfp;        /* file pointer for password input */
+    int pswdtries;       /* number of password tries, -1 for unlimited */
+    char *pubpath;       /* path to the public keyring */
+    char *pubformat;     /* format of the public keyring */
+    char *secpath;       /* path to the secret keyring */
+    char *secformat;     /* format of the secret keyring */
+    char *defkey;        /* default key id */
 } new_rnp_t;
 
 /* rnp initialization parameters : keyring pathes, flags, whatever else */
@@ -77,7 +83,6 @@ typedef struct rnp_params_t {
                                   default to not leak confidential information */
 
     int         passfd; /* password file descriptor */
-    int         userinputfd;
     const char *ress; /* results stream : maye be <stdout>, <stderr> or file name/path */
 
     const char *ks_pub_format;     /* format of the public key store */
@@ -90,8 +95,10 @@ typedef struct rnp_params_t {
 
 /* initialize rnp using the init structure  */
 rnp_result_t rnp_init(rnp_t *, const rnp_params_t *);
+rnp_result_t new_rnp_init(new_rnp_t *, const rnp_params_t *);
 /* finish work with rnp and cleanup the memory */
 void rnp_end(rnp_t *);
+void new_rnp_end(rnp_t *);
 /* load keys */
 bool rnp_load_keyrings(rnp_t *rnp, bool loadsecret);
 

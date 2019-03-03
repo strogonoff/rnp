@@ -309,13 +309,6 @@ rnp_init(rnp_t *rnp, const rnp_params_t *params)
         rnp->password_provider.userdata = rnp->passfp;
     }
 
-    if (params->userinputfd >= 0) {
-        rnp->user_input_fp = fdopen(params->userinputfd, "r");
-        if (!rnp->user_input_fp) {
-            return RNP_ERROR_BAD_PARAMETERS;
-        }
-    }
-
     rnp->pswdtries = MAX_PASSWORD_ATTEMPTS;
 
     /* set keystore type and pathes */
@@ -370,7 +363,13 @@ new_rnp_init(new_rnp_t *rnp, const rnp_params_t *params)
     }
 
     rnp_result_t ret = RNP_ERROR_GENERIC;
-    if ((ret = rnp_ffi_create(&rnp->ffi, params->ks_pub_format, params->ks_sec_format))) {
+    if (!(rnp->pubformat = strdup(params->ks_pub_format))) {
+        return RNP_ERROR_OUT_OF_MEMORY;
+    }
+    if (!(rnp->secformat = strdup(params->ks_sec_format))) {
+        return RNP_ERROR_OUT_OF_MEMORY;
+    }
+    if ((ret = rnp_ffi_create(&rnp->ffi, rnp->pubformat, rnp->secformat))) {
         return ret;
     }
 
@@ -390,33 +389,24 @@ new_rnp_init(new_rnp_t *rnp, const rnp_params_t *params)
         }
     }
 
-    if (params->userinputfd >= 0) {
-        rnp->user_input_fp = fdopen(params->userinputfd, "r");
-        if (!rnp->user_input_fp) {
-            return RNP_ERROR_BAD_PARAMETERS;
-        }
-    }
-
     rnp->pswdtries = MAX_PASSWORD_ATTEMPTS;
 
-    /* set keystore type and pathes */
     if (params->pubpath) {
-        rnp->pubring = rnp_key_store_new(params->ks_pub_format, params->pubpath);
-        if (rnp->pubring == NULL) {
-            RNP_LOG("can't create empty pubring keystore");
-            return RNP_ERROR_BAD_PARAMETERS;
+        rnp->pubpath = strdup(params->pubpath);
+        if (!rnp->pubpath) {
+            RNP_LOG("allocation failed");
+            ret = RNP_ERROR_OUT_OF_MEMORY;
+            goto done;
         }
     }
     if (params->secpath) {
-        rnp->secring = rnp_key_store_new(params->ks_sec_format, params->secpath);
-        if (rnp->secring == NULL) {
-            RNP_LOG("can't create empty secring keystore");
-            return RNP_ERROR_BAD_PARAMETERS;
+        rnp->secpath = strdup(params->secpath);
+        if (!rnp->secpath) {
+            RNP_LOG("allocation failed");
+            ret = RNP_ERROR_OUT_OF_MEMORY;
+            goto done;
         }
     }
-
-    // Lazy mode can't fail
-    (void) rng_init(&rnp->rng, RNG_DRBG);
 done:
     if (ret) {
         rnp_ffi_destroy(rnp->ffi);
@@ -446,6 +436,29 @@ rnp_end(rnp_t *rnp)
         fclose(rnp->resfp);
         rnp->resfp = NULL;
     }
+}
+
+void
+new_rnp_end(new_rnp_t *rnp)
+{
+    free(rnp->pubpath);
+    free(rnp->pubformat);
+    free(rnp->secpath);
+    free(rnp->secformat);
+
+    if (rnp->defkey) {
+        free(rnp->defkey);
+        rnp->defkey = NULL;
+    }
+    if (rnp->passfp) {
+        fclose(rnp->passfp);
+        rnp->passfp = NULL;
+    }
+    if (rnp->resfp && (rnp->resfp != stderr) && (rnp->resfp != stdout)) {
+        fclose(rnp->resfp);
+        rnp->resfp = NULL;
+    }
+    rnp_ffi_destroy(rnp->ffi);
 }
 
 bool
@@ -500,13 +513,76 @@ rnp_load_keyrings(rnp_t *rnp, bool loadsecret)
     return true;
 }
 
+bool
+new_rnp_load_keyrings(new_rnp_t *rnp, bool loadsecret)
+{
+    char id[MAX_ID_LENGTH];
+    rnp_input_t keyin = NULL;
+    rnp_result_t ret = RNP_ERROR_GENERIC;
+    bool res = false;
+
+    //TODO: clear keyrings
+
+    if ((ret = rnp_input_from_path(&keyin, rnp->pubpath))) {
+        RNP_LOG("wrong pubring path");
+        goto done;
+    }
+
+    if ((ret = rnp_load_keys(rnp->ffi, rnp->pubformat, keyin, RNP_LOAD_SAVE_PUBLIC_KEYS))) {
+        RNP_LOG("cannot read pub keyring");
+        goto done;
+    }
+
+    size_t keycount = 0;
+    if ((ret = rnp_get_public_key_count(rnp->ffi, &keycount))) {
+        goto done;
+    }
+
+    if (keycount < 1) {
+        RNP_LOG("pub keyring '%s' is empty", rnp->pubpath);
+        goto done;
+    }
+
+    /* Only read secret keys if we need to */
+    if (loadsecret) {
+        rnp_key_store_clear(secring);
+        if (!rnp_key_store_load_from_path(secring, &rnp->key_provider)) {
+            RNP_LOG("cannot read sec keyring");
+            return false;
+        }
+
+        if (rnp_key_store_get_key_count(secring) < 1) {
+            RNP_LOG("sec keyring '%s' is empty", ((rnp_key_store_t *) secring)->path);
+            return false;
+        }
+
+        /* Now, if we don't have a valid user, use the first
+         * in secring.
+         */
+        if (!rnp->defkey) {
+            if (rnp_key_store_get_first_ring(secring, id, sizeof(id), 0)) {
+                rnp->defkey = strdup(id);
+            }
+        }
+
+    } else if (!rnp->defkey) {
+        /* encrypting - get first in pubring */
+        if (rnp_key_store_get_first_ring(rnp->pubring, id, sizeof(id), 0)) {
+            rnp->defkey = strdup(id);
+        }
+    }
+
+done:
+    rnp_input_destroy(keyin);
+    return res;
+}
+
 /* rnp_params_t : initialize and free internals */
 void
 rnp_params_init(rnp_params_t *params)
 {
     memset(params, '\0', sizeof(*params));
     params->passfd = -1;
-    params->userinputfd = -1;
 }
 
 void
@@ -1508,11 +1584,6 @@ rnp_cfg_apply(rnp_cfg_t *cfg, rnp_params_t *params)
     /* checking if password input was specified */
     if ((fd = rnp_cfg_getint(cfg, CFG_PASSFD))) {
         params->passfd = fd;
-    }
-
-    /* checking if user input was specified */
-    if ((fd = rnp_cfg_getint(cfg, CFG_USERINPUTFD))) {
-        params->userinputfd = fd;
     }
 
     if ((stream = rnp_cfg_getstr(cfg, CFG_IO_RESS))) {
