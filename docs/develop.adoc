@@ -444,7 +444,7 @@ More information sources:
 == Reviewers and Responsibility areas
 
 The individuals are responsible for the following areas of `rnp`.
-When submitting a Pull Request please seek reviews by whoever is
+When submitting a pull request, please seek reviews from whomever is
 responsible according to this list.
 
 General:
